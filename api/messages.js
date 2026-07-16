@@ -9,50 +9,13 @@
 // Requires a valid session cookie — see lib/auth.js.
 
 import { requireAuth } from "../lib/auth.js";
+import { classify, parseSignal } from "../lib/parse.js";
 
 const API = "https://discord.com/api/v10";
 
 // Small in-memory cache so rapid page polls don't hammer Discord's rate limit.
 let cache = { t: 0, data: null };
 const TTL_MS = 10_000;
-
-function classify(text) {
-  const t = text.toLowerCase();
-  if (text.includes("📈") || t.includes("trade alert")) return "alert";
-  if (text.includes("✅") || t.includes("trade update")) return "update";
-  if (text.includes("⚠️") || t.includes("reminder") || t.includes("not financial advice")) return "reminder";
-  return "general";
-}
-
-function parseTrade(text) {
-  const field = (label) => {
-    const m = text.match(new RegExp(label + "\\s*:?\\s*([^\\n]+)", "i"));
-    return m ? m[1].trim() : null;
-  };
-  const num = (s) => {
-    if (!s) return null;
-    const m = s.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
-    return m ? parseFloat(m[0]) : null;
-  };
-  const ticker = (text.match(/\$([A-Z]{1,6})\b/) || [])[1] || null;
-  if (!ticker && !/ticker\s*:/i.test(text)) return null;
-  const entry = num(field("Entry"));
-  const t1 = num(field("Target ?1"));
-  const stop = num(field("Stop Loss"));
-  let rr = null;
-  if (entry != null && t1 != null && stop != null && entry !== stop) {
-    rr = Math.abs((t1 - entry) / (entry - stop));
-  }
-  return {
-    ticker,
-    direction: field("Direction"),
-    entry: field("Entry"),
-    t1: field("Target ?1"),
-    t2: field("Target ?2"),
-    stop: field("Stop Loss"),
-    rr: rr != null ? rr.toFixed(2) : null,
-  };
-}
 
 async function dfetch(endpoint, token) {
   const res = await fetch(`${API}${endpoint}`, { headers: { Authorization: `Bot ${token}` } });
@@ -104,7 +67,7 @@ export default async function handler(req, res) {
     let msgs = [];
     for (const c of channelIds) msgs = msgs.concat(await fetchRecent(c, token));
     msgs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    const enriched = msgs.map((m) => ({ ...m, type: classify(m.content), trade: parseTrade(m.content) }));
+    const enriched = msgs.map((m) => ({ ...m, type: classify(m.content), trade: parseSignal(m.content) }));
     const data = { messages: enriched, fetchedAt: new Date().toISOString() };
     cache = { t: Date.now(), data };
     res.setHeader("cache-control", "no-store");

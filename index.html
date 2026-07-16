@@ -65,7 +65,9 @@
   .dir{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--line)}
   .dir.long{background:color-mix(in srgb,var(--long) 22%,transparent);color:var(--long)}
   .dir.short{background:color-mix(in srgb,var(--short) 22%,transparent);color:var(--short)}
-  .rr{margin-left:auto;font-size:11px;font-weight:700;color:var(--accent);border:1px solid var(--accent);padding:2px 8px;border-radius:6px}
+  .rr{margin-left:auto;font-size:11px;font-weight:700;color:var(--accent);border:1px solid var(--accent);padding:2px 8px;border-radius:6px;font-family:ui-monospace,Menlo,monospace}
+  .kind{font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--muted-fg);border:1px solid var(--line);padding:2px 6px;border-radius:5px}
+  .warns{margin-top:10px;font-size:12px;color:var(--warn);line-height:1.6}
   .sig-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px}
   .sig-grid>div{background:var(--card2);border-radius:8px;padding:8px 10px}
   .sig-grid span{display:block;font-size:11px;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.3px}
@@ -164,16 +166,42 @@ $("logout").addEventListener("click", async ()=>{
 });
 
 /* ---------------- render ---------------- */
-function tradeHTML(t){
-  if(!t) return "";
+const cell = (lab,val,cls="") =>
+  (val===null||val===undefined||val==="") ? "" : `<div class="${cls}"><span>${lab}</span><b>${esc(val)}</b></div>`;
+
+function warnHTML(w){
+  return w && w.length ? `<div class="warns">${w.map(x=>`⚠️ ${esc(x)}`).join("<br>")}</div>` : "";
+}
+
+function optionHTML(t){
+  const isCall = t.type === "C";
+  return `<div class="signal"><div class="sig-head">
+      <span class="tk">$${esc(t.ticker)}</span>
+      <span class="dir ${isCall?"long":"short"}">${isCall?"CALL":"PUT"}</span>
+      <span class="kind">OPTION</span>
+      <span class="rr">${esc(t.occ)}</span>
+    </div><div class="sig-grid">
+      ${cell("Strike","$"+t.strike)}
+      ${cell("Expiry",t.expiry)}
+      ${cell("Premium","$"+Number(t.premium).toFixed(2))}
+      ${cell("Side",(t.side||"").toUpperCase())}
+    </div>${warnHTML(t.warnings)}</div>`;
+}
+
+function stockHTML(t){
   const dir = t.direction ? `<span class="dir ${/long|bull/i.test(t.direction)?"long":/short|bear/i.test(t.direction)?"short":""}">${esc(t.direction)}</span>` : "";
-  const cell = (lab,val,cls="") => val ? `<div class="${cls}"><span>${lab}</span><b>${esc(val)}</b></div>` : "";
   return `<div class="signal"><div class="sig-head">
       <span class="tk">$${esc(t.ticker||"?")}</span>${dir}
+      <span class="kind">STOCK</span>
       ${t.rr?`<span class="rr">R:R ${esc(t.rr)}</span>`:""}
     </div><div class="sig-grid">
       ${cell("Entry",t.entry)}${cell("Target 1",t.t1)}${cell("Target 2",t.t2)}${cell("Stop Loss",t.stop,"sl")}
-    </div></div>`;
+    </div>${warnHTML(t.warnings)}</div>`;
+}
+
+function tradeHTML(t){
+  if(!t) return "";
+  return t.kind === "option" ? optionHTML(t) : stockHTML(t);
 }
 
 function renderTabs(all){
