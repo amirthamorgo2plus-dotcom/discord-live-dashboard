@@ -111,6 +111,22 @@
   .place:disabled{opacity:.5;cursor:default}
   .modal-err{color:var(--short);font-size:12px;margin-top:12px}
   .ok-box{background:color-mix(in srgb,var(--long) 12%,transparent);border:1px solid var(--long);color:var(--long);border-radius:10px;padding:14px;font-size:13px;line-height:1.6}
+  /* ---------- order state on a card ---------- */
+  .order{margin-top:10px;border:1px solid var(--c);border-radius:9px;padding:9px 11px;background:color-mix(in srgb,var(--c) 8%,transparent)}
+  .o-top{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:12px}
+  .o-status{color:var(--c);font-weight:800;letter-spacing:.4px}
+  .o-qty{color:var(--muted-fg)}
+  .pl{margin-top:7px;font-size:13px;font-weight:800;color:var(--c);display:flex;gap:8px;align-items:baseline}
+  .pl span{font-weight:600;font-size:11px;opacity:.85}
+  .pl .mk{margin-left:auto;color:var(--muted-fg)}
+  /* ---------- positions panel ---------- */
+  .pos{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .pos:last-child{border-bottom:0}
+  .pos b{display:block;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .pos span{color:var(--muted-fg);font-size:11px}
+  .pos-pl{text-align:right;font-weight:800;color:var(--c)}
+  .pos-pl span{display:block;font-weight:600;color:var(--c);opacity:.8}
+  .pos.total{border-top:1px solid var(--line);margin-top:4px;padding-top:10px}
 </style></head><body>
 
 <!-- ========== PASSCODE GATE ========== -->
@@ -141,6 +157,7 @@
   <div class="grid">
     <section><h2>Message Feed</h2><div id="feed"></div></section>
     <div style="display:flex;flex-direction:column;gap:18px">
+      <section><h2>Open Positions</h2><div id="positions"></div></section>
       <section><h2>Message Types</h2><div id="types"></div></section>
       <section><h2>Summary</h2><div id="summary"></div></section>
     </div>
@@ -231,18 +248,50 @@ function stockHTML(t){
     </div>${warnHTML(t.warnings)}</div>`;
 }
 
+const STATUS_COLOR = (s, open) =>
+  s === "filled" ? "var(--long)"
+  : ["canceled","expired","rejected"].includes(s) ? "var(--short)"
+  : open ? "var(--warn)" : "var(--muted-fg)";
+
+function money(n){
+  const v = Number(n);
+  if(!isFinite(v)) return "—";
+  return (v<0?"-":"")+"$"+Math.abs(v).toFixed(2);
+}
+
+// Order state comes from Alpaca (source of truth), so it survives reloads.
+function orderHTML(o){
+  if(!o) return "";
+  const col = STATUS_COLOR(o.status, o.open);
+  const fill = o.filled_avg_price ? ` @ ${money(o.filled_avg_price)}` : "";
+  const p = o.position;
+  const pl = p ? Number(p.unrealized_pl) : null;
+  const plHTML = p
+    ? `<div class="pl" style="--c:${pl>=0?"var(--long)":"var(--short)"}">
+         ${pl>=0?"▲":"▼"} ${money(p.unrealized_pl)}
+         <span>(${(Number(p.unrealized_plpc)*100).toFixed(1)}%)</span>
+         <span class="mk">mark ${money(p.current_price)}</span>
+       </div>` : "";
+  return `<div class="order" style="--c:${col}">
+      <div class="o-top">
+        <span class="o-status">${esc(o.status.toUpperCase())}${o.open?" · working":""}</span>
+        <span class="o-qty">${esc(o.filled_qty||"0")}/${esc(o.qty)} filled${fill}</span>
+      </div>
+      ${plHTML}
+    </div>`;
+}
+
 function tradeHTML(t, m){
   if(!t) return "";
   const card = t.kind === "option" ? optionHTML(t) : stockHTML(t);
-  const done = placed.get(m.id);
-  const btn = done
-    ? `<button class="trade-btn done" disabled>✓ Placed · ${esc(done)}</button>`
-    : `<button class="trade-btn" data-mid="${esc(m.id)}" data-cid="${esc(m.channel_id)}">Review Trade →</button>`;
-  return card + btn;
+  const o = orders[m.id];
+  if(o) return card + orderHTML(o);
+  return card + `<button class="trade-btn" data-mid="${esc(m.id)}" data-cid="${esc(m.channel_id)}">Review Trade →</button>`;
 }
 
 /* ---------------- approval flow ---------------- */
-const placed = new Map();   // message_id -> order status/id
+let orders = {};      // message_id -> order (from Alpaca)
+let positions = [];
 
 async function openTradeModal(messageId, channelId){
   let qty = 1;
@@ -322,13 +371,46 @@ async function openTradeModal(messageId, channelId){
     draw({ preview:cur, busy:true });
     try{
       const j = await call(true);
-      placed.set(messageId, j.placed.status);
       draw({ done:j.placed, preview:cur });
+      await loadOrders();                 // pull real state back from Alpaca
       if(latest) render(latest);
     }catch(e){ draw({ preview:cur, error:e.message }); }
   }
 
   await refresh();
+}
+
+async function loadOrders(){
+  try{
+    const r = await fetch("/api/alpaca/orders",{cache:"no-store"});
+    if(!r.ok){ return; }                  // Alpaca not configured yet — stay quiet
+    const j = await r.json();
+    orders = j.byMessage || {};
+    positions = j.positions || [];
+    renderPositions();
+  }catch{ /* leave previous state */ }
+}
+
+function renderPositions(){
+  const el = $("positions");
+  if(!el) return;
+  if(!positions.length){
+    el.innerHTML = `<p style="color:var(--muted-fg);font-size:13px;margin:0">No open positions.</p>`;
+    return;
+  }
+  const total = positions.reduce((s,p)=>s+Number(p.unrealized_pl||0),0);
+  el.innerHTML = positions.map(p=>{
+    const pl = Number(p.unrealized_pl);
+    return `<div class="pos">
+      <div><b>${esc(p.symbol)}</b><span>${esc(p.qty)} @ ${money(p.avg_entry_price)}</span></div>
+      <div class="pos-pl" style="--c:${pl>=0?"var(--long)":"var(--short)"}">
+        ${money(p.unrealized_pl)}<span>${(Number(p.unrealized_plpc)*100).toFixed(1)}%</span>
+      </div>
+    </div>`;
+  }).join("") + `<div class="pos total">
+      <div><b>Total unrealised</b></div>
+      <div class="pos-pl" style="--c:${total>=0?"var(--long)":"var(--short)"}">${money(total)}</div>
+    </div>`;
 }
 
 async function loadAccount(){
@@ -422,6 +504,7 @@ async function tick(){
     if(r.status === 401){ showGate("Session expired — enter the passcode again."); return; }
     const j = await r.json();
     if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+    await loadOrders();          // refresh fills/P&L alongside messages
     render(j);
   }catch(e){
     $("error").innerHTML = `<div class="err"><b>Couldn't load messages.</b> ${esc(e.message)}<br>
@@ -435,7 +518,11 @@ function start(){ tick(); loadAccount(); if(!timer) timer = setInterval(tick, PO
   const r = await fetch("/api/messages",{cache:"no-store"}).catch(()=>null);
   if(r && r.status === 401){ showGate(); return; }
   showApp();
-  if(r && r.ok){ render(await r.json()); loadAccount(); if(!timer) timer = setInterval(tick, POLL_MS); }
-  else start();
+  if(r && r.ok){
+    const data = await r.json();
+    await loadOrders();
+    render(data); loadAccount();
+    if(!timer) timer = setInterval(tick, POLL_MS);
+  } else start();
 })();
 </script></body></html>
