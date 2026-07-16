@@ -10,11 +10,12 @@
 
 import { requireAuth } from "../lib/auth.js";
 import { classify, parseSignal } from "../lib/parse.js";
+import { getWatchedChannels } from "../lib/settings.js";
 
 const API = "https://discord.com/api/v10";
 
 // Small in-memory cache so rapid page polls don't hammer Discord's rate limit.
-let cache = { t: 0, data: null };
+let cache = { t: 0, key: null, data: null };
 const TTL_MS = 10_000;
 
 async function dfetch(endpoint, token) {
@@ -50,14 +51,16 @@ export default async function handler(req, res) {
   if (!requireAuth(req, res)) return;
 
   const token = process.env.DISCORD_TOKEN;
-  const channelIds = (process.env.CHANNEL_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const { channels: channelIds, source } = await getWatchedChannels();
 
   if (!token || !channelIds.length) {
-    res.status(500).json({ error: "Server missing DISCORD_TOKEN and/or CHANNEL_ID environment variables." });
+    res.status(500).json({ error: "No channels configured. Set CHANNEL_ID, or pick channels in Settings." });
     return;
   }
 
-  if (cache.data && Date.now() - cache.t < TTL_MS) {
+  // Cache key includes the channel set so changing the selection takes effect at once.
+  const key = channelIds.join(",");
+  if (cache.data && cache.key === key && Date.now() - cache.t < TTL_MS) {
     res.setHeader("x-cache", "HIT");
     res.status(200).json(cache.data);
     return;
@@ -68,8 +71,8 @@ export default async function handler(req, res) {
     for (const c of channelIds) msgs = msgs.concat(await fetchRecent(c, token));
     msgs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
     const enriched = msgs.map((m) => ({ ...m, type: classify(m.content), trade: parseSignal(m.content) }));
-    const data = { messages: enriched, fetchedAt: new Date().toISOString() };
-    cache = { t: Date.now(), data };
+    const data = { messages: enriched, fetchedAt: new Date().toISOString(), channelSource: source };
+    cache = { t: Date.now(), key, data };
     res.setHeader("cache-control", "no-store");
     res.status(200).json(data);
   } catch (e) {

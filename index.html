@@ -127,6 +127,13 @@
   .pos-pl{text-align:right;font-weight:800;color:var(--c)}
   .pos-pl span{display:block;font-weight:600;color:var(--c);opacity:.8}
   .pos.total{border-top:1px solid var(--line);margin-top:4px;padding-top:10px}
+  /* ---------- settings ---------- */
+  .guild{margin-top:14px}
+  .guild-name{font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--muted-fg);margin-bottom:6px}
+  .chan-row{display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer;background:var(--card2);font-size:13px}
+  .chan-row:hover{border-color:var(--accent)}
+  .chan-row input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
+  .chan-row input:disabled{cursor:default}
 </style></head><body>
 
 <!-- ========== PASSCODE GATE ========== -->
@@ -149,7 +156,10 @@
       <p><span class="live"><span class="dot"></span>Auto-refreshing</span> · <span id="sub">connecting…</span></p>
       <div class="acct" id="acct"></div>
     </div>
-    <button class="out" id="logout">Log out</button>
+    <div style="display:flex;gap:8px">
+      <button class="out" id="settings">⚙ Settings</button>
+      <button class="out" id="logout">Log out</button>
+    </div>
   </header>
   <div class="tabs" id="tabs"></div>
   <div id="error"></div>
@@ -412,6 +422,75 @@ function renderPositions(){
       <div class="pos-pl" style="--c:${total>=0?"var(--long)":"var(--short)"}">${money(total)}</div>
     </div>`;
 }
+
+/* ---------------- settings: channel selection ---------------- */
+async function openSettings(){
+  const root = $("modalRoot");
+  const draw = (s) => {
+    root.innerHTML = `<div class="backdrop" id="backdrop"><div class="modal">
+      <h3>Settings</h3>
+      <p class="subtle">Choose which Discord channels this dashboard reads.</p>
+      ${s.loading ? `<div class="desc">Loading channels the bot can see…</div>` : `
+        ${s.data.canSave ? "" : `<div class="modal-warn">${esc(s.data.note||"")}</div>`}
+        ${s.data.guilds.length ? s.data.guilds.map(g=>`
+          <div class="guild">
+            <div class="guild-name">${esc(g.guild_name)}</div>
+            ${g.channels.map(c=>`
+              <label class="chan-row">
+                <input type="checkbox" value="${esc(c.id)}" ${s.sel.has(c.id)?"checked":""} ${s.data.canSave?"":"disabled"}>
+                <span>#${esc(c.name)}</span>
+              </label>`).join("")}
+          </div>`).join("")
+          : `<div class="modal-warn">The bot cannot see any channels. Invite it to a server with View Channel + Read Message History.</div>`}
+        <p class="note" style="margin-top:14px">
+          Source: <b>${esc(s.data.source)}</b>${s.data.source==="env"?" (CHANNEL_ID)":" (saved selection)"}.
+          The bot token stays in the server's secret store and is not editable here.
+        </p>
+      `}
+      ${s.error ? `<div class="modal-err">${esc(s.error)}</div>` : ""}
+      ${s.saved ? `<div class="ok-box" style="margin-top:12px">Saved — reloading channels.</div>` : ""}
+      <div class="btns">
+        <button class="cancel" id="close">Close</button>
+        <button class="place" id="save" ${(s.loading||!s.data?.canSave||s.busy)?"disabled":""}>
+          ${s.busy?"Saving…":"Save selection"}
+        </button>
+      </div>
+    </div></div>`;
+
+    $("close").onclick = () => { root.innerHTML=""; };
+    $("backdrop").onclick = e => { if(e.target.id==="backdrop") root.innerHTML=""; };
+    root.querySelectorAll('.chan-row input').forEach(cb=>{
+      cb.onchange = () => { cb.checked ? s.sel.add(cb.value) : s.sel.delete(cb.value); };
+    });
+    const save = $("save");
+    if(save) save.onclick = async () => {
+      draw({...s, busy:true, error:null});
+      try{
+        const r = await fetch("/api/discord/channels",{
+          method:"POST", headers:{"content-type":"application/json"},
+          body: JSON.stringify({ channels:[...s.sel] })
+        });
+        const j = await r.json();
+        if(!r.ok) throw new Error(j.error||"Save failed");
+        draw({...s, busy:false, saved:true});
+        seen = new Set();
+        await tick();
+        setTimeout(()=>{ root.innerHTML=""; }, 1200);
+      }catch(e){ draw({...s, busy:false, error:e.message}); }
+    };
+  };
+
+  draw({ loading:true, sel:new Set() });
+  try{
+    const r = await fetch("/api/discord/channels",{cache:"no-store"});
+    const data = await r.json();
+    if(!r.ok) throw new Error(data.error||"Could not load channels");
+    draw({ data, sel:new Set(data.selected||[]) });
+  }catch(e){
+    draw({ loading:false, data:{guilds:[],canSave:false,source:"env",note:""}, sel:new Set(), error:e.message });
+  }
+}
+$("settings").addEventListener("click", openSettings);
 
 async function loadAccount(){
   try{

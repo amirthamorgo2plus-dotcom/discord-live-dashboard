@@ -11,6 +11,7 @@
 
 import { requireAuth } from "../../lib/auth.js";
 import { parseSignal } from "../../lib/parse.js";
+import { getWatchedChannels } from "../../lib/settings.js";
 import { alpaca, buildOrder, estimateCost, describeOrder, isPaper, MAX_QTY } from "../../lib/alpaca.js";
 
 const DISCORD_API = "https://discord.com/api/v10";
@@ -34,8 +35,8 @@ export default async function handler(req, res) {
   if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
   const { message_id, channel_id, qty, confirm } = body || {};
 
-  // Only channels this dashboard is configured for may be traded.
-  const allowed = (process.env.CHANNEL_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
+  // Only channels this dashboard is configured to watch may be traded.
+  const { channels: allowed } = await getWatchedChannels();
   if (!allowed.includes(String(channel_id))) {
     res.status(400).json({ error: "Unknown channel." });
     return;
