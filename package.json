@@ -1,0 +1,10 @@
+{
+  "name": "discord-live-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Live Discord message dashboard with server-side trade-signal parsing.",
+  "scripts": {
+    "dev": "vercel dev"
+  }
+}

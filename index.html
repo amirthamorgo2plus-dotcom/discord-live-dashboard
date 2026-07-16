@@ -1,0 +1,166 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Discord Live Dashboard</title>
+<style>
+  :root{
+    --bg:#0f1117; --card:#171a23; --card2:#1d212c; --fg:#e7e9ee; --muted-fg:#9aa2b1;
+    --line:#272b36; --accent:#5865f2; --long:#3ba55d; --short:#ed4245; --warn:#faa61a;
+  }
+  @media (prefers-color-scheme:light){
+    :root{--bg:#f4f5f8;--card:#fff;--card2:#f7f8fa;--fg:#1b1e27;--muted-fg:#5b6472;--line:#e4e7ee;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:28px}
+  .wrap{max-width:1040px;margin:0 auto}
+  header h1{margin:0 0 4px;font-size:24px;display:flex;align-items:center;gap:10px}
+  header p{margin:0;color:var(--muted-fg);font-size:13px}
+  .tag{background:var(--accent);color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.3px}
+  .live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--long);font-weight:700}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--long);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:22px 0}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .kpi .n{font-size:26px;font-weight:750;letter-spacing:-.5px}
+  .kpi .l{color:var(--muted-fg);font-size:12px;margin-top:2px;text-transform:uppercase;letter-spacing:.4px}
+  .grid{display:grid;grid-template-columns:1fr;gap:18px}
+  @media(min-width:820px){.grid{grid-template-columns:1.6fr 1fr}}
+  section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px}
+  section h2{margin:0 0 14px;font-size:14px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted-fg)}
+  .msg{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+  .msg:last-child{margin-bottom:0}
+  .msg.new{animation:flash 1.2s ease-out}
+  @keyframes flash{from{box-shadow:0 0 0 2px var(--accent)}to{box-shadow:none}}
+  .msg-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px}
+  .who{display:flex;gap:10px;align-items:center}
+  .av{width:34px;height:34px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700}
+  .who b{display:block;font-size:14px}
+  .who time{color:var(--muted-fg);font-size:12px}
+  .badge{font-size:11px;font-weight:700;color:var(--c);border:1px solid var(--c);border-radius:20px;padding:3px 9px;white-space:nowrap}
+  .body{white-space:pre-wrap;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:transparent;margin:0;color:var(--fg);opacity:.92}
+  .signal{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--card)}
+  .sig-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+  .tk{font-weight:800;font-size:18px;letter-spacing:-.5px}
+  .dir{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--line)}
+  .dir.long{background:color-mix(in srgb,var(--long) 22%,transparent);color:var(--long)}
+  .dir.short{background:color-mix(in srgb,var(--short) 22%,transparent);color:var(--short)}
+  .rr{margin-left:auto;font-size:11px;font-weight:700;color:var(--accent);border:1px solid var(--accent);padding:2px 8px;border-radius:6px}
+  .sig-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:10px}
+  .sig-grid>div{background:var(--card2);border-radius:8px;padding:8px 10px}
+  .sig-grid span{display:block;font-size:11px;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.3px}
+  .sig-grid b{font-size:14px}
+  .sig-grid .sl b{color:var(--short)}
+  .bar-row{display:grid;grid-template-columns:120px 1fr 24px;align-items:center;gap:10px;margin-bottom:10px;font-size:13px}
+  .bl{color:var(--muted-fg)}
+  .bt{background:var(--card2);border-radius:6px;height:12px;overflow:hidden}
+  .bt i{display:block;height:100%;border-radius:6px;transition:width .4s}
+  .bar-row b{text-align:right}
+  .srow{display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:10px;font-size:13px}
+  .note{color:var(--muted-fg);font-size:12px;margin-top:14px;line-height:1.5}
+  footer{color:var(--muted-fg);font-size:12px;text-align:center;margin-top:26px}
+  .err{background:color-mix(in srgb,var(--short) 12%,transparent);border:1px solid var(--short);color:var(--short);border-radius:12px;padding:14px;margin:18px 0;font-size:13px}
+</style></head><body><div class="wrap">
+  <header>
+    <h1 id="title">Discord Live Dashboard <span class="tag">LIVE</span></h1>
+    <p><span class="live"><span class="dot"></span>Auto-refreshing</span> · <span id="sub">connecting…</span></p>
+  </header>
+  <div id="error"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="grid">
+    <section><h2>Message Feed</h2><div id="feed"></div></section>
+    <div style="display:flex;flex-direction:column;gap:18px">
+      <section><h2>Message Types</h2><div id="types"></div></section>
+      <section><h2>Summary</h2><div id="summary"></div></section>
+    </div>
+  </div>
+  <footer id="foot">Live dashboard · polls every 20s</footer>
+</div>
+<script>
+const POLL_MS = 20000;
+const TYPE_META = {
+  alert:    { label:"Trade Alert",  color:"var(--long)",    icon:"📈" },
+  update:   { label:"Trade Update", color:"var(--accent)",  icon:"✅" },
+  reminder: { label:"Reminder",     color:"var(--warn)",    icon:"⚠️" },
+  general:  { label:"General",      color:"var(--muted-fg)",icon:"💬" },
+};
+const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = d => d ? new Date(d).toLocaleString("en-US",{dateStyle:"medium",timeStyle:"short"}) : "—";
+let seen = new Set();
+
+function tradeHTML(t){
+  if(!t) return "";
+  const dir = t.direction ? `<span class="dir ${/long/i.test(t.direction)?"long":/short/i.test(t.direction)?"short":""}">${esc(t.direction)}</span>` : "";
+  const cell = (lab,val,cls="") => val ? `<div class="${cls}"><span>${lab}</span><b>${esc(val)}</b></div>` : "";
+  return `<div class="signal"><div class="sig-head">
+      <span class="tk">$${esc(t.ticker||"?")}</span>${dir}
+      ${t.rr?`<span class="rr">R:R ${esc(t.rr)}</span>`:""}
+    </div><div class="sig-grid">
+      ${cell("Entry",t.entry)}${cell("Target 1",t.t1)}${cell("Target 2",t.t2)}${cell("Stop Loss",t.stop,"sl")}
+    </div></div>`;
+}
+
+function render(data){
+  const msgs = data.messages;
+  document.getElementById("error").innerHTML = "";
+  const channel = msgs[0]?.channel_name || "—";
+  document.getElementById("title").innerHTML = `#${esc(channel)} <span class="tag">LIVE</span>`;
+  const times = msgs.map(m=>new Date(m.timestamp)).sort((a,b)=>a-b);
+  document.getElementById("sub").textContent =
+    `${msgs.length} messages · updated ${fmt(data.fetchedAt)}`;
+
+  const authors = [...new Set(msgs.map(m=>m.author))];
+  const counts = msgs.reduce((a,m)=>((a[m.type]=(a[m.type]||0)+1),a),{});
+  const signals = msgs.filter(m=>m.trade).length;
+
+  document.getElementById("kpis").innerHTML = [
+    [msgs.length,"Messages"],[signals,"Trade Signals"],
+    [authors.length,"Contributors"],[(counts.alert||0),"Alerts 📈"],
+  ].map(([n,l])=>`<div class="kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+
+  // newest first in the feed
+  document.getElementById("feed").innerHTML = [...msgs].reverse().map(m=>{
+    const meta = TYPE_META[m.type];
+    const isNew = !seen.has(m.id);
+    return `<article class="msg ${isNew&&seen.size?"new":""}">
+      <div class="msg-top"><div class="who">
+        <span class="av">${esc((m.author||"?")[0].toUpperCase())}</span>
+        <div><b>${esc(m.author)}</b><time>${fmt(m.timestamp)}</time></div>
+      </div><span class="badge" style="--c:${meta.color}">${meta.icon} ${meta.label}</span></div>
+      ${tradeHTML(m.trade)}
+      <pre class="body">${esc(m.content)}</pre>
+    </article>`;
+  }).join("") || "<p style='color:var(--muted-fg)'>No messages yet.</p>";
+  seen = new Set(msgs.map(m=>m.id));
+
+  const maxT = Math.max(1,...Object.values(counts));
+  document.getElementById("types").innerHTML = Object.entries(TYPE_META).map(([k,meta])=>{
+    const n = counts[k]||0;
+    return `<div class="bar-row"><span class="bl">${meta.icon} ${meta.label}</span>
+      <div class="bt"><i style="width:${n/maxT*100}%;background:${meta.color}"></i></div><b>${n}</b></div>`;
+  }).join("");
+
+  document.getElementById("summary").innerHTML = `
+    <div class="srow"><span class="bl">Channel</span><b>#${esc(channel)}</b></div>
+    <div class="srow"><span class="bl">Contributors</span><b>${esc(authors.join(", ")||"—")}</b></div>
+    <div class="srow"><span class="bl">First message</span><b>${fmt(times[0])}</b></div>
+    <div class="srow"><span class="bl">Latest message</span><b>${fmt(times[times.length-1])}</b></div>
+    <p class="note">⚠️ Signals are auto-parsed from message text and may be incomplete. Not financial advice.</p>`;
+
+  document.getElementById("foot").textContent =
+    `Live dashboard · polls every ${POLL_MS/1000}s · last update ${fmt(data.fetchedAt)}`;
+}
+
+async function tick(){
+  try{
+    const r = await fetch("/api/messages",{cache:"no-store"});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error||("HTTP "+r.status));
+    render(j);
+  }catch(e){
+    document.getElementById("error").innerHTML =
+      `<div class="err"><b>Couldn't load messages.</b> ${esc(e.message)}<br>
+       If deployed, check that <code>DISCORD_TOKEN</code> and <code>CHANNEL_ID</code> are set in Vercel → Settings → Environment Variables.</div>`;
+  }
+}
+tick();
+setInterval(tick, POLL_MS);
+</script></body></html>
