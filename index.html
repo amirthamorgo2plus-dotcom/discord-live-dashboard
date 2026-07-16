@@ -82,6 +82,35 @@
   .note{color:var(--muted-fg);font-size:12px;margin-top:14px;line-height:1.5}
   footer{color:var(--muted-fg);font-size:12px;text-align:center;margin-top:26px}
   .err{background:color-mix(in srgb,var(--short) 12%,transparent);border:1px solid var(--short);color:var(--short);border-radius:12px;padding:14px;margin:18px 0;font-size:13px}
+  /* ---------- alpaca / approval ---------- */
+  .acct{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted-fg);margin-top:8px}
+  .acct b{color:var(--fg)}
+  .paper{background:color-mix(in srgb,var(--long) 18%,transparent);color:var(--long);border:1px solid var(--long);border-radius:20px;padding:2px 9px;font-size:11px;font-weight:800;letter-spacing:.4px}
+  .liveflag{background:color-mix(in srgb,var(--short) 18%,transparent);color:var(--short);border:1px solid var(--short);border-radius:20px;padding:2px 9px;font-size:11px;font-weight:800;letter-spacing:.4px}
+  .trade-btn{margin-top:10px;width:100%;padding:9px;border-radius:9px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer}
+  .trade-btn:hover{background:var(--accent);color:#fff}
+  .trade-btn.done{border-color:var(--long);color:var(--long);cursor:default}
+  .trade-btn.done:hover{background:transparent;color:var(--long)}
+  .backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:20px;z-index:50}
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;max-width:520px;width:100%;max-height:90vh;overflow:auto}
+  .modal h3{margin:0 0 4px;font-size:17px}
+  .modal .subtle{color:var(--muted-fg);font-size:12px;margin:0 0 16px}
+  .desc{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:14px;font-size:15px;font-weight:700;line-height:1.5}
+  .payload{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px;font:11px/1.5 ui-monospace,Menlo,monospace;color:var(--muted-fg);white-space:pre;overflow-x:auto}
+  .qty-row{display:flex;align-items:center;gap:10px;margin-top:14px}
+  .qty-row label{font-size:13px;color:var(--muted-fg)}
+  .qty-row input{width:90px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card2);color:var(--fg);font-size:15px;font-weight:700;text-align:center}
+  .cost{margin-left:auto;font-size:13px}
+  .cost b{font-size:17px}
+  .modal-warn{background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid var(--warn);color:var(--warn);border-radius:10px;padding:11px;margin-top:12px;font-size:12px;line-height:1.6}
+  .btns{display:flex;gap:10px;margin-top:18px}
+  .btns button{flex:1;padding:11px;border-radius:10px;font-weight:700;font-size:14px;cursor:pointer;border:1px solid var(--line)}
+  .cancel{background:transparent;color:var(--muted-fg)}
+  .cancel:hover{color:var(--fg)}
+  .place{background:var(--long);border-color:var(--long);color:#fff}
+  .place:disabled{opacity:.5;cursor:default}
+  .modal-err{color:var(--short);font-size:12px;margin-top:12px}
+  .ok-box{background:color-mix(in srgb,var(--long) 12%,transparent);border:1px solid var(--long);color:var(--long);border-radius:10px;padding:14px;font-size:13px;line-height:1.6}
 </style></head><body>
 
 <!-- ========== PASSCODE GATE ========== -->
@@ -102,6 +131,7 @@
     <div>
       <h1 id="title">Trade Dashboard <span class="tag">LIVE</span></h1>
       <p><span class="live"><span class="dot"></span>Auto-refreshing</span> · <span id="sub">connecting…</span></p>
+      <div class="acct" id="acct"></div>
     </div>
     <button class="out" id="logout">Log out</button>
   </header>
@@ -117,6 +147,8 @@
   </div>
   <footer id="foot">Live dashboard</footer>
 </div>
+
+<div id="modalRoot"></div>
 
 <script>
 const POLL_MS = 20000;
@@ -199,9 +231,119 @@ function stockHTML(t){
     </div>${warnHTML(t.warnings)}</div>`;
 }
 
-function tradeHTML(t){
+function tradeHTML(t, m){
   if(!t) return "";
-  return t.kind === "option" ? optionHTML(t) : stockHTML(t);
+  const card = t.kind === "option" ? optionHTML(t) : stockHTML(t);
+  const done = placed.get(m.id);
+  const btn = done
+    ? `<button class="trade-btn done" disabled>✓ Placed · ${esc(done)}</button>`
+    : `<button class="trade-btn" data-mid="${esc(m.id)}" data-cid="${esc(m.channel_id)}">Review Trade →</button>`;
+  return card + btn;
+}
+
+/* ---------------- approval flow ---------------- */
+const placed = new Map();   // message_id -> order status/id
+
+async function openTradeModal(messageId, channelId){
+  let qty = 1;
+  const root = $("modalRoot");
+
+  const draw = (state) => {
+    const p = state.preview;
+    const cost = p && p.estimated_cost != null ? `$${p.estimated_cost.toFixed(2)}` : "—";
+    const flag = p ? (p.paper
+        ? `<span class="paper">PAPER</span>`
+        : `<span class="liveflag">⚠️ LIVE MONEY</span>`) : "";
+    const warns = p && p.warnings && p.warnings.length
+      ? `<div class="modal-warn"><b>Check before placing:</b><br>${p.warnings.map(w=>"• "+esc(w)).join("<br>")}</div>` : "";
+
+    root.innerHTML = `<div class="backdrop" id="backdrop"><div class="modal">
+      ${state.done ? `
+        <h3>Order placed ${flag}</h3>
+        <p class="subtle">Submitted to Alpaca.</p>
+        <div class="ok-box">
+          <b>${esc(state.done.symbol)}</b> · ${esc(state.done.side)} ${esc(state.done.qty)}<br>
+          Status: <b>${esc(state.done.status)}</b><br>
+          Order ID: ${esc(state.done.id)}
+        </div>
+        <div class="btns"><button class="cancel" id="close">Close</button></div>
+      ` : `
+        <h3>Review trade ${flag}</h3>
+        <p class="subtle">Verify this against the Discord message before placing.</p>
+        ${state.loading ? `<div class="desc">Loading preview…</div>` : `
+          <div class="desc">${esc(p.description)}</div>
+          ${warns}
+          <div class="qty-row">
+            <label for="qty">Quantity</label>
+            <input id="qty" type="number" min="1" max="100" step="1" value="${qty}">
+            <span class="cost">Est. cost<br><b>${cost}</b></span>
+          </div>
+          <div class="payload">${esc(JSON.stringify(p.order, null, 2))}</div>
+        `}
+        ${state.error ? `<div class="modal-err">${esc(state.error)}</div>` : ""}
+        <div class="btns">
+          <button class="cancel" id="close">Cancel</button>
+          <button class="place" id="place" ${state.loading||state.busy?"disabled":""}>
+            ${state.busy ? "Placing…" : "Place Order"}
+          </button>
+        </div>
+      `}
+    </div></div>`;
+
+    $("close").onclick = () => { root.innerHTML = ""; };
+    $("backdrop").onclick = (e) => { if(e.target.id==="backdrop") root.innerHTML=""; };
+    const qtyEl = $("qty");
+    if(qtyEl) qtyEl.onchange = async () => {
+      const v = parseInt(qtyEl.value,10);
+      if(Number.isInteger(v) && v>=1 && v<=100){ qty = v; await refresh(); }
+    };
+    const placeEl = $("place");
+    if(placeEl) placeEl.onclick = () => submit();
+  };
+
+  const call = (confirm) => fetch("/api/alpaca/place",{
+    method:"POST", headers:{"content-type":"application/json"},
+    body: JSON.stringify({ message_id: messageId, channel_id: channelId, qty, confirm })
+  }).then(async r => {
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
+  });
+
+  async function refresh(){
+    draw({ loading:true });
+    try{ draw({ preview:(await call(false)).preview }); }
+    catch(e){ draw({ loading:false, preview:{description:"—",order:{},warnings:[],estimated_cost:null}, error:e.message }); }
+  }
+
+  async function submit(){
+    let cur;
+    try{ cur = (await call(false)).preview; }catch(e){ return draw({preview:null,loading:false,error:e.message}); }
+    draw({ preview:cur, busy:true });
+    try{
+      const j = await call(true);
+      placed.set(messageId, j.placed.status);
+      draw({ done:j.placed, preview:cur });
+      if(latest) render(latest);
+    }catch(e){ draw({ preview:cur, error:e.message }); }
+  }
+
+  await refresh();
+}
+
+async function loadAccount(){
+  try{
+    const r = await fetch("/api/alpaca/account",{cache:"no-store"});
+    const j = await r.json();
+    if(!r.ok){ $("acct").innerHTML = `<span style="color:var(--warn)">Alpaca not connected — ${esc(j.error||"")}</span>`; return; }
+    const a = j.account;
+    $("acct").innerHTML =
+      `${j.paper?'<span class="paper">PAPER</span>':'<span class="liveflag">⚠️ LIVE MONEY</span>'}
+       Equity <b>$${esc(Number(a.equity).toLocaleString())}</b>
+       Buying power <b>$${esc(Number(a.buying_power).toLocaleString())}</b>
+       ${a.options_approved_level!=null?`Options level <b>${esc(a.options_approved_level)}</b>`:""}
+       ${j.positions.length?`Positions <b>${j.positions.length}</b>`:""}`;
+  }catch{ $("acct").innerHTML = ""; }
 }
 
 function renderTabs(all){
@@ -245,11 +387,15 @@ function render(data){
         <span class="av">${esc((m.author||"?")[0].toUpperCase())}</span>
         <div><b>${esc(m.author)}<span class="chan">#${esc(m.channel_name)}</span></b><time>${fmt(m.timestamp)}</time></div>
       </div><span class="badge" style="--c:${meta.color}">${meta.icon} ${meta.label}</span></div>
-      ${tradeHTML(m.trade)}
+      ${tradeHTML(m.trade, m)}
       <pre class="body">${esc(m.content)}</pre>
     </article>`;
   }).join("") || "<p style='color:var(--muted-fg)'>No messages in this channel yet.</p>";
   seen = new Set(all.map(m=>m.id));
+
+  $("feed").querySelectorAll(".trade-btn[data-mid]").forEach(b=>{
+    b.onclick = () => openTradeModal(b.dataset.mid, b.dataset.cid);
+  });
 
   const maxT = Math.max(1,...Object.values(counts));
   $("types").innerHTML = Object.entries(TYPE_META).map(([k,meta])=>{
@@ -282,14 +428,14 @@ async function tick(){
       Check <code>DISCORD_TOKEN</code> and <code>CHANNEL_ID</code> in Vercel → Settings → Environment Variables.</div>`;
   }
 }
-function start(){ tick(); if(!timer) timer = setInterval(tick, POLL_MS); }
+function start(){ tick(); loadAccount(); if(!timer) timer = setInterval(tick, POLL_MS); }
 
 // Probe session on load: authed -> dashboard, else -> gate.
 (async ()=>{
   const r = await fetch("/api/messages",{cache:"no-store"}).catch(()=>null);
   if(r && r.status === 401){ showGate(); return; }
   showApp();
-  if(r && r.ok){ render(await r.json()); if(!timer) timer = setInterval(tick, POLL_MS); }
+  if(r && r.ok){ render(await r.json()); loadAccount(); if(!timer) timer = setInterval(tick, POLL_MS); }
   else start();
 })();
 </script></body></html>
