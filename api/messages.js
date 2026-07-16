@@ -5,6 +5,10 @@
 // Required environment variables (set these in the Vercel dashboard, NOT in code):
 //   DISCORD_TOKEN  = your bot token
 //   CHANNEL_ID     = one channel id, or several comma-separated
+//
+// Requires a valid session cookie — see lib/auth.js.
+
+import { requireAuth } from "../lib/auth.js";
 
 const API = "https://discord.com/api/v10";
 
@@ -80,6 +84,8 @@ async function fetchRecent(channelId, token) {
 }
 
 export default async function handler(req, res) {
+  if (!requireAuth(req, res)) return;
+
   const token = process.env.DISCORD_TOKEN;
   const channelIds = (process.env.CHANNEL_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
 
