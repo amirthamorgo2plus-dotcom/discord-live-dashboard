@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseSignal } from "../lib/parse.js";
-import { buildOrder, estimateCost, describeOrder, isPaper, MAX_QTY } from "../lib/alpaca.js";
+import { buildOrder, buildCloseOrder, parseOcc, matchExitPositions, estimateCost, describeOrder, isPaper, MAX_QTY } from "../lib/alpaca.js";
 
 const NOW = new Date("2026-07-16T12:00:00Z");
 
@@ -107,4 +107,42 @@ test("description reads as plain English for confirmation", () => {
 test("client_order_id is carried through for idempotency", () => {
   const s = parseSignal("META 7/17 C 690 1.1", NOW);
   assert.equal(buildOrder(s, 1, "dash-999").client_order_id, "dash-999");
+});
+
+/* ---------- exits ---------- */
+
+test("parseOcc is the inverse of the OCC encoding", () => {
+  assert.deepEqual(parseOcc("NVDA270715C00215000"), {
+    ticker: "NVDA", expiry: "2027-07-15", type: "C", strike: 215,
+  });
+  assert.equal(parseOcc("not-an-occ"), null);
+});
+
+test("matchExitPositions finds a held contract by ticker/strike/type", () => {
+  const exit = parseSignal("NVDA 215c TRIMMED AT 44%", NOW);
+  const positions = [
+    { symbol: "NVDA270715C00215000", qty: "3" },   // match
+    { symbol: "NVDA270715C00220000", qty: "1" },   // wrong strike
+    { symbol: "AAPL260717C00420000", qty: "2" },   // wrong ticker
+  ];
+  const m = matchExitPositions(exit, positions);
+  assert.equal(m.length, 1);
+  assert.equal(m[0].symbol, "NVDA270715C00215000");
+});
+
+test("buildCloseOrder sells the held contract to close", () => {
+  const o = buildCloseOrder({ symbol: "NVDA270715C00215000", qty: "3" }, 3, "dash-exit-1");
+  assert.deepEqual(o, {
+    symbol: "NVDA270715C00215000",
+    qty: "3",
+    side: "sell",
+    type: "market",
+    time_in_force: "day",
+    client_order_id: "dash-exit-1",
+  });
+});
+
+test("buildCloseOrder refuses to sell more than held", () => {
+  assert.throws(() => buildCloseOrder({ symbol: "X", qty: "2" }, 3, "id"), /between 1 and 2/i);
+  assert.throws(() => buildCloseOrder({ symbol: "X", qty: "2" }, 0, "id"), /between 1 and 2/i);
 });

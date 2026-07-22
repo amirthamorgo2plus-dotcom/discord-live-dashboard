@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseSignal, parseOptionsSignal, parseStockSignal, toOccSymbol } from "../lib/parse.js";
+import { parseSignal, parseOptionsSignal, parseStockSignal, parseExitSignal, parseLabeledOptionSignal, toOccSymbol } from "../lib/parse.js";
 
 // Fixed "now" so bare M/D expiries resolve deterministically.
 const NOW = new Date("2026-07-16T12:00:00Z");
@@ -86,6 +86,101 @@ test("refuses options shorthand missing a required field", () => {
 test("refuses prose that merely mentions a ticker", () => {
   assert.equal(parseSignal("I think $AAPL looks strong here", NOW), null);
   assert.equal(parseSignal("Watching $NVDA near resistance for a breakout", NOW), null);
+});
+
+/* ---------- The Option Haven: keyworded options ---------- */
+
+test("TOH: AVG premium + EXP date + underlying stop", () => {
+  const s = parseSignal("NVDA 215C AVG .64 EXP 7/15 - use 209.6 as stops", NOW);
+  assert.equal(s.kind, "option");
+  assert.equal(s.ticker, "NVDA");
+  assert.equal(s.strike, 215);
+  assert.equal(s.type, "C");
+  assert.equal(s.premium, 0.64, "AVG value is the premium");
+  // 7/15 is before NOW (7/16) -> rolls to next year (never an expired contract).
+  assert.equal(s.expiry, "2027-07-15");
+  assert.equal(s.underlyingStop, 209.6);
+  assert.equal(s.occ, "NVDA270715C00215000");
+});
+
+test("TOH: trailing STOPS number", () => {
+  const s = parseSignal("DELL 410C AVG 8.45 EXP 7/17 STOPS 399", NOW);
+  assert.equal(s.ticker, "DELL");
+  assert.equal(s.strike, 410);
+  assert.equal(s.premium, 8.45);
+  assert.equal(s.underlyingStop, 399);
+  assert.equal(s.occ, "DELL260717C00410000");
+});
+
+test("TOH: EXP before AVG (order-independent)", () => {
+  const s = parseSignal("HOOD 117C EXP 7/24 AVG 2.75", NOW);
+  assert.equal(s.ticker, "HOOD");
+  assert.equal(s.strike, 117);
+  assert.equal(s.premium, 2.75);
+  assert.equal(s.expiry, "2026-07-24");
+});
+
+test("TOH: 'BE' ticker is not swallowed as a stopword", () => {
+  const s = parseSignal("BE 250C AVG 33.2 EXP 7/31", NOW);
+  assert.equal(s.ticker, "BE");
+  assert.equal(s.strike, 250);
+  assert.equal(s.premium, 33.2);
+});
+
+test("TOH: multi-line message parses the entry line", () => {
+  const s = parseSignal("BE 250C AVG 33.2 EXP 7/31\nWill add more if it dips to 231\n\nSTOPS 225 @everyone", NOW);
+  assert.equal(s.kind, "option");
+  assert.equal(s.ticker, "BE");
+});
+
+/* ---------- Market Bishop: labeled options ---------- */
+
+test("Bishop: Option/Entry labels", () => {
+  const s = parseSignal("Option: CEL 18 P 7/11\nEntry: 0.59\nNotes: LIGHTRISKY", NOW);
+  assert.equal(s.kind, "option");
+  assert.equal(s.ticker, "CEL");
+  assert.equal(s.strike, 18);
+  assert.equal(s.type, "P");
+  assert.equal(s.premium, 0.59);
+  // 7/11 is before NOW (7/16), so it correctly rolls to next year rather than
+  // resolving to an already-expired contract.
+  assert.equal(s.expiry, "2027-07-11");
+  assert.equal(s.occ, "CEL270711P00018000");
+});
+
+/* ---------- exit signals ---------- */
+
+test("exit: TRIMMED AT is a partial sell-to-close", () => {
+  const s = parseSignal("NVDA 215c TRIMMED AT 44%", NOW);
+  assert.equal(s.kind, "exit");
+  assert.equal(s.ticker, "NVDA");
+  assert.equal(s.strike, 215);
+  assert.equal(s.type, "C");
+  assert.equal(s.action, "trim");
+  assert.equal(s.side, "sell");
+  assert.equal(s.pct, 44);
+});
+
+test("exit: ALL OUT is a full close", () => {
+  const s = parseSignal("AAPL 315C ALL OUT AT 226%", NOW);
+  assert.equal(s.action, "close");
+  assert.equal(s.ticker, "AAPL");
+  assert.equal(s.pct, 226);
+});
+
+test("exit: 'AL OUT' typo still recognised as full close", () => {
+  assert.equal(parseSignal("AAPL 315C AL OUT AT 226%", NOW).action, "close");
+});
+
+test("exit: TRIMMED MAX", () => {
+  const s = parseSignal("HOOD 117C TRIMMED MAX AT 50%", NOW);
+  assert.equal(s.action, "trim");
+  assert.equal(s.strike, 117);
+});
+
+test("entry with STOPS is NOT misread as an exit", () => {
+  // "STOPS 399" is a stop level on an entry, not a TRIMMED/ALL-OUT exit.
+  assert.equal(parseSignal("DELL 410C AVG 8.45 EXP 7/17 STOPS 399", NOW).kind, "option");
 });
 
 /* ---------- verbose stock alerts ---------- */

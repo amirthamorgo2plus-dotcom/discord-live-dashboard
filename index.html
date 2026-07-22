@@ -60,6 +60,7 @@
   .badge{font-size:11px;font-weight:700;color:var(--c);border:1px solid var(--c);border-radius:20px;padding:3px 9px;white-space:nowrap}
   .body{white-space:pre-wrap;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:transparent;margin:0;color:var(--fg);opacity:.92}
   .signal{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--card)}
+  .signal.exit{border-color:color-mix(in srgb,var(--short) 45%,var(--line))}
   .sig-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
   .tk{font-weight:800;font-size:18px;letter-spacing:-.5px}
   .dir{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--line)}
@@ -134,6 +135,7 @@
   .chan-row:hover{border-color:var(--accent)}
   .chan-row input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
   .chan-row input:disabled{cursor:default}
+  .ptext{width:100%;padding:11px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--fg);font:13px/1.5 ui-monospace,Menlo,monospace;resize:vertical}
 </style></head><body>
 
 <!-- ========== PASSCODE GATE ========== -->
@@ -157,6 +159,7 @@
       <div class="acct" id="acct"></div>
     </div>
     <div style="display:flex;gap:8px">
+      <button class="out" id="paste">➕ Paste signal</button>
       <button class="out" id="settings">⚙ Settings</button>
       <button class="out" id="logout">Log out</button>
     </div>
@@ -182,6 +185,7 @@ const POLL_MS = 20000;
 const TYPE_META = {
   alert:    { label:"Trade Alert",  color:"var(--long)",    icon:"📈" },
   update:   { label:"Trade Update", color:"var(--accent)",  icon:"✅" },
+  exit:     { label:"Exit",         color:"var(--short)",   icon:"🔻" },
   reminder: { label:"Reminder",     color:"var(--warn)",    icon:"⚠️" },
   general:  { label:"General",      color:"var(--muted-fg)",icon:"💬" },
 };
@@ -291,30 +295,49 @@ function orderHTML(o){
     </div>`;
 }
 
+function exitHTML(t){
+  const kindWord = t.action === "close" ? "SELL ALL" : "TRIM";
+  return `<div class="signal exit"><div class="sig-head">
+      <span class="tk">$${esc(t.ticker)}</span>
+      <span class="dir short">${kindWord}</span>
+      <span class="kind">EXIT · ${t.type==="C"?"CALL":"PUT"}</span>
+      ${t.pct!=null?`<span class="rr">${esc(t.pct)}%</span>`:""}
+    </div><div class="sig-grid">
+      ${cell("Strike","$"+t.strike)}
+      ${cell("Action",t.action==="close"?"Close all":"Trim")}
+      ${cell("Side","SELL")}
+    </div>${warnHTML(t.warnings)}</div>`;
+}
+
 function tradeHTML(t, m){
   if(!t) return "";
-  const card = t.kind === "option" ? optionHTML(t) : stockHTML(t);
+  const card = t.kind === "exit" ? exitHTML(t) : t.kind === "option" ? optionHTML(t) : stockHTML(t);
   const o = orders[m.id];
   if(o) return card + orderHTML(o);
-  return card + `<button class="trade-btn" data-mid="${esc(m.id)}" data-cid="${esc(m.channel_id)}">Review Trade →</button>`;
+  const label = t.kind === "exit" ? "Review Exit →" : "Review Trade →";
+  return card + `<button class="trade-btn" data-mid="${esc(m.id)}" data-cid="${esc(m.channel_id)}">${label}</button>`;
 }
 
 /* ---------------- approval flow ---------------- */
 let orders = {};      // message_id -> order (from Alpaca)
 let positions = [];
 
-async function openTradeModal(messageId, channelId){
-  let qty = 1;
+// source is either { messageId, channelId } (Discord) or { text } (pasted).
+async function openTradeModal(source){
+  let qty = null;                 // null -> let the server suggest (exits default to held/half)
   const root = $("modalRoot");
 
   const draw = (state) => {
     const p = state.preview;
+    const isExit = p && p.signal && p.signal.kind === "exit";
     const cost = p && p.estimated_cost != null ? `$${p.estimated_cost.toFixed(2)}` : "—";
     const flag = p ? (p.paper
         ? `<span class="paper">PAPER</span>`
         : `<span class="liveflag">⚠️ LIVE MONEY</span>`) : "";
     const warns = p && p.warnings && p.warnings.length
       ? `<div class="modal-warn"><b>Check before placing:</b><br>${p.warnings.map(w=>"• "+esc(w)).join("<br>")}</div>` : "";
+    const qtyVal = qty ?? (p ? p.order.qty : 1);
+    const qtyMax = isExit && p.exit ? p.exit.held : 100;
 
     root.innerHTML = `<div class="backdrop" id="backdrop"><div class="modal">
       ${state.done ? `
@@ -327,15 +350,17 @@ async function openTradeModal(messageId, channelId){
         </div>
         <div class="btns"><button class="cancel" id="close">Close</button></div>
       ` : `
-        <h3>Review trade ${flag}</h3>
-        <p class="subtle">Verify this against the Discord message before placing.</p>
+        <h3>${isExit ? "Review exit" : "Review trade"} ${flag}</h3>
+        <p class="subtle">Verify this against the Discord message before ${isExit ? "closing" : "placing"}.</p>
         ${state.loading ? `<div class="desc">Loading preview…</div>` : `
           <div class="desc">${esc(p.description)}</div>
           ${warns}
           <div class="qty-row">
-            <label for="qty">Quantity</label>
-            <input id="qty" type="number" min="1" max="100" step="1" value="${qty}">
-            <span class="cost">Est. cost<br><b>${cost}</b></span>
+            <label for="qty">${isExit ? "Contracts to sell" : "Quantity"}</label>
+            <input id="qty" type="number" min="1" max="${qtyMax}" step="1" value="${qtyVal}">
+            ${isExit
+              ? `<span class="cost">Held<br><b>${p.exit ? p.exit.held : "—"}</b></span>`
+              : `<span class="cost">Est. cost<br><b>${cost}</b></span>`}
           </div>
           <div class="payload">${esc(JSON.stringify(p.order, null, 2))}</div>
         `}
@@ -343,7 +368,7 @@ async function openTradeModal(messageId, channelId){
         <div class="btns">
           <button class="cancel" id="close">Cancel</button>
           <button class="place" id="place" ${state.loading||state.busy?"disabled":""}>
-            ${state.busy ? "Placing…" : "Place Order"}
+            ${state.busy ? (isExit?"Closing…":"Placing…") : (isExit?"Sell to Close":"Place Order")}
           </button>
         </div>
       `}
@@ -354,15 +379,19 @@ async function openTradeModal(messageId, channelId){
     const qtyEl = $("qty");
     if(qtyEl) qtyEl.onchange = async () => {
       const v = parseInt(qtyEl.value,10);
-      if(Number.isInteger(v) && v>=1 && v<=100){ qty = v; await refresh(); }
+      if(Number.isInteger(v) && v>=1 && v<=qtyMax){ qty = v; await refresh(); }
     };
     const placeEl = $("place");
     if(placeEl) placeEl.onclick = () => submit();
   };
 
+  const srcBody = source.text != null
+    ? { text: source.text }
+    : { message_id: source.messageId, channel_id: source.channelId };
   const call = (confirm) => fetch("/api/alpaca/place",{
     method:"POST", headers:{"content-type":"application/json"},
-    body: JSON.stringify({ message_id: messageId, channel_id: channelId, qty, confirm })
+    // omit qty when null so the server can suggest a default (exits)
+    body: JSON.stringify({ ...srcBody, ...(qty!=null?{qty}:{}), confirm })
   }).then(async r => {
     const j = await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
@@ -371,8 +400,13 @@ async function openTradeModal(messageId, channelId){
 
   async function refresh(){
     draw({ loading:true });
-    try{ draw({ preview:(await call(false)).preview }); }
-    catch(e){ draw({ loading:false, preview:{description:"—",order:{},warnings:[],estimated_cost:null}, error:e.message }); }
+    try{
+      const p = (await call(false)).preview;
+      // adopt the server-suggested quantity (held/half for exits) into the input
+      if(qty==null && p.order && p.order.qty) qty = parseInt(p.order.qty,10);
+      draw({ preview:p });
+    }
+    catch(e){ draw({ loading:false, preview:{signal:{},description:"—",order:{},warnings:[],estimated_cost:null}, error:e.message }); }
   }
 
   async function submit(){
@@ -422,6 +456,55 @@ function renderPositions(){
       <div class="pos-pl" style="--c:${total>=0?"var(--long)":"var(--short)"}">${money(total)}</div>
     </div>`;
 }
+
+/* ---------------- manual paste ---------------- */
+async function openPasteModal(){
+  const root = $("modalRoot");
+  let preview = null, debounce = null;
+
+  const draw = (err) => {
+    const p = preview;
+    const parsed = p && p.signal;
+    root.innerHTML = `<div class="backdrop" id="backdrop"><div class="modal">
+      <h3>Paste a signal</h3>
+      <p class="subtle">For alerts from servers the bot can't read. Paste the exact text.</p>
+      <textarea id="ptext" class="ptext" rows="3" placeholder="e.g.  AAPL 420C 7/17 2.5   or   NVDA 215C AVG .64 EXP 7/15"></textarea>
+      ${parsed ? `<div class="desc" style="margin-top:12px">${esc(p.description)}</div>
+        ${p.warnings&&p.warnings.length?`<div class="modal-warn">${p.warnings.map(w=>"• "+esc(w)).join("<br>")}</div>`:""}`
+        : `<p class="note" style="margin-top:10px">${err?`<span style="color:var(--short)">${esc(err)}</span>`:"Parsed preview appears here as you type."}</p>`}
+      <div class="btns">
+        <button class="cancel" id="close">Cancel</button>
+        <button class="place" id="toReview" ${parsed?"":"disabled"}>Review →</button>
+      </div>
+    </div></div>`;
+    const ta = $("ptext");
+    ta.value = window.__pasteDraft || "";
+    ta.focus();
+    ta.oninput = () => {
+      window.__pasteDraft = ta.value;
+      clearTimeout(debounce);
+      debounce = setTimeout(preflight, 350);
+    };
+    $("close").onclick = () => { root.innerHTML=""; window.__pasteDraft=""; };
+    $("backdrop").onclick = e => { if(e.target.id==="backdrop"){ root.innerHTML=""; window.__pasteDraft=""; } };
+    const rv = $("toReview");
+    if(rv) rv.onclick = () => { const t = ta.value; window.__pasteDraft=""; openTradeModal({ text:t }); };
+  };
+
+  async function preflight(){
+    const text = (window.__pasteDraft||"").trim();
+    if(!text){ preview=null; return draw(); }
+    try{
+      const r = await fetch("/api/alpaca/place",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({text,confirm:false})});
+      const j = await r.json();
+      if(!r.ok){ preview=null; return draw(j.error||"Not a recognised signal."); }
+      preview = j.preview; draw();
+    }catch(e){ preview=null; draw(e.message); }
+  }
+
+  draw();
+}
+$("paste").addEventListener("click", openPasteModal);
 
 /* ---------------- settings: channel selection ---------------- */
 async function openSettings(){
@@ -555,7 +638,7 @@ function render(data){
   seen = new Set(all.map(m=>m.id));
 
   $("feed").querySelectorAll(".trade-btn[data-mid]").forEach(b=>{
-    b.onclick = () => openTradeModal(b.dataset.mid, b.dataset.cid);
+    b.onclick = () => openTradeModal({ messageId:b.dataset.mid, channelId:b.dataset.cid });
   });
 
   const maxT = Math.max(1,...Object.values(counts));

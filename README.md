@@ -34,13 +34,24 @@ after **explicit human approval** in the UI. There is no auto-execution.
 - Quantity is capped (`MAX_QTY` in `lib/alpaca.js`).
 - Paper is the default; live money requires deliberately setting `ALPACA_PAPER=false`.
 
-**Order mapping**
+**Signal formats parsed** (`lib/parse.js`)
 
-| Signal | Alpaca order |
-| ------ | ------------ |
-| Options shorthand (`AAPL 420C 7/17 2.5`) | limit buy on the OCC contract at the quoted premium |
-| Stock alert with target + stop | bracket order (entry limit + take-profit + stop-loss) |
-| Stock alert without direction | refused — never guessed |
+| Format | Example | Result |
+| ------ | ------- | ------ |
+| Options shorthand | `AAPL 420C 7/17 2.5` | limit buy on the OCC contract at the premium |
+| Options keyworded (The Option Haven) | `NVDA 215C AVG .64 EXP 7/15 - use 209.6 as stops` | same, + underlying stop noted |
+| Options labeled (Market Bishop) | `Option: CEL 18 P 7/11` / `Entry: 0.59` | same |
+| Exit | `NVDA 215c TRIMMED AT 44%`, `AAPL 315C ALL OUT AT 226%` | sell-to-close a matching held position |
+| Stock alert w/ target + stop | verbose | bracket order (entry + take-profit + stop-loss) |
+| Stock alert without direction | — | refused, never guessed |
+
+**Manual paste** — for alerts from servers the bot can't read: paste the text,
+it parses/previews/places through the same safe path. Idempotency key is a hash
+of the pasted text, so pasting the same signal twice is refused by Alpaca.
+
+**Exits** name a contract but no expiry, so they are matched against your actual
+open positions by ticker/strike/type. A full close sells everything; a trim
+suggests half and you adjust. Multiple matching expiries → close manually.
 
 ## Tests
 
